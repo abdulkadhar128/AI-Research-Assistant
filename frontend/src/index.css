@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply antialiased text-slate-900 bg-slate-50;
+  }
+
+  .markdown h1 { @apply text-3xl font-bold mt-8 mb-4 text-slate-900; }
+  .markdown h2 { @apply text-2xl font-bold mt-8 mb-4 text-slate-800 border-b pb-2; }
+  .markdown h3 { @apply text-xl font-bold mt-6 mb-3 text-slate-800; }
+  .markdown p { @apply text-slate-700 leading-relaxed mb-4; }
+  .markdown ul { @apply list-disc list-inside space-y-2 mb-4 text-slate-700; }
+  .markdown ol { @apply list-decimal list-inside space-y-2 mb-4 text-slate-700; }
+  .markdown strong { @apply font-semibold text-slate-900; }
+  .markdown a { @apply text-primary-600 hover:underline; }
+  .markdown pre { @apply bg-slate-900 text-slate-50 p-4 rounded-xl overflow-x-auto mb-4; }
+  .markdown code { @apply bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded text-sm font-mono; }
+  .markdown pre code { @apply bg-transparent text-slate-50 p-0 text-sm; }
+}

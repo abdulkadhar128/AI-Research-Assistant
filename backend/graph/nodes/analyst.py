@@ -12,7 +12,7 @@ def analyst_node(state: ResearchState) -> dict:
     Returns:
         dict: A dictionary containing the updated 'analysis' key.
     """
-    research = state.get("research", "")
+    research = state.get("fact_checked_research", "")
     client = LLMClient()
     prompt = ANALYST_PROMPT.format(research=research)
     analysis = client.generate(prompt=prompt, system_instruction="Analysis generation constraint")

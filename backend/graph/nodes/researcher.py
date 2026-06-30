@@ -1,19 +1,24 @@
+import time
 from backend.graph.state import ResearchState
 from backend.llm.client import LLMClient
-from backend.llm.prompts import RESEARCHER_PROMPT
+from backend.llm.config import LLMConfig
+from backend.llm.prompts import MERGED_RESEARCHER_PROMPT
 
 def researcher_node(state: ResearchState) -> dict:
     """
-    Researcher node that gathers facts and info based on the research plan.
-
-    Args:
-        state (ResearchState): The current state of the research workflow.
-
-    Returns:
-        dict: A dictionary containing the updated 'research' key.
+    Researcher node that gathers and fact-checks information in a single LLM pass.
     """
     plan = state.get("plan", "")
-    client = LLMClient()
-    prompt = RESEARCHER_PROMPT.format(plan=plan)
-    research = client.generate(prompt=prompt, system_instruction="Findings generation constraint")
-    return {"research": research}
+    search_results = state.get("search_results", "")
+    
+    # Use fast model tier for quick summarization and verification
+    client = LLMClient(model_name=LLMConfig.get_fast_model())
+    prompt = MERGED_RESEARCHER_PROMPT.format(plan=plan, search_results=search_results)
+    
+    research = client.generate(prompt=prompt, system_instruction="Findings generation and verification constraint")
+    
+    return {
+        "research": research,
+        "fact_checked_research": research,  # populate for backwards compatibility
+        "researcher_finish_time": time.time()
+    }
