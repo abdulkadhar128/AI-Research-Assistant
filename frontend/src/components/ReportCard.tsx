@@ -2,11 +2,10 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, FileText, Calendar } from 'lucide-react';
 import { Report } from '../types/report';
 import QualityBadge from './QualityBadge';
+import { formatReportDateTime } from '../utils/date';
 
 export default function ReportCard({ report }: { report: Report }) {
-  const dateStr = new Date(report.created_at).toLocaleDateString(undefined, {
-    year: 'numeric', month: 'short', day: 'numeric'
-  });
+  const dateStr = formatReportDateTime(report.created_at);
 
   return (
     <Link 

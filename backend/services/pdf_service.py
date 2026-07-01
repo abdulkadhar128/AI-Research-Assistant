@@ -6,6 +6,7 @@ from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from backend.database.models import Report
+from backend.utils.datetime_utils import format_local_datetime
 
 class PDFService:
     """
@@ -117,7 +118,7 @@ class PDFService:
         story.append(Spacer(1, 10))
 
         # 2. Metadata Table (Query, Score, Date)
-        created_str = report.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") if report.created_at else "N/A"
+        created_str = format_local_datetime(report.created_at)
         
         # Build nice layout grid for metadata
         meta_data = [

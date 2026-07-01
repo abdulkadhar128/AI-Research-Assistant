@@ -37,4 +37,9 @@ def init_db() -> None:
             with engine.begin() as conn:
                 conn.execute(text("DROP TABLE IF EXISTS reports"))
                 conn.execute(text("DROP TABLE IF EXISTS users"))
+        elif "generation_time" not in columns:
+            print("Migration: adding generation_time column to reports table...")
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE reports ADD COLUMN generation_time REAL"))
     Base.metadata.create_all(bind=engine)
+

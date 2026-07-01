@@ -24,6 +24,7 @@ class ResearchResponse(BaseModel):
     report_id: int
     report: str
     quality_score: float
+    generation_time: float
 
 @router.post("/research", response_model=ResearchResponse)
 def run_research(request: ResearchRequest, db: Session = Depends(get_db)) -> ResearchResponse:
@@ -36,6 +37,7 @@ def run_research(request: ResearchRequest, db: Session = Depends(get_db)) -> Res
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
 
     try:
+        t0 = time.time()
         # Invoke the compiled LangGraph workflow with the initial state
         initial_state = {
             "query": request.query,
@@ -48,9 +50,10 @@ def run_research(request: ResearchRequest, db: Session = Depends(get_db)) -> Res
             "report": "",
             "review_feedback": "",
             "quality_score": 0.0,
-            "start_time": time.time()
+            "start_time": t0
         }
         result = research_graph.invoke(initial_state)
+        generation_time = round(time.time() - t0, 2)
 
         # Extract workflow outputs
         report = result.get("report", "")
@@ -67,14 +70,16 @@ def run_research(request: ResearchRequest, db: Session = Depends(get_db)) -> Res
             report=report,
             quality_score=quality_score,
             review_feedback=review_feedback,
-            citations=citations
+            citations=citations,
+            generation_time=generation_time
         )
         db_report = crud.create_report(db, report=report_in)
 
         return ResearchResponse(
             report_id=db_report.id,
             report=db_report.report,
-            quality_score=db_report.quality_score
+            quality_score=db_report.quality_score,
+            generation_time=generation_time
         )
 
     except Exception as e:

@@ -55,7 +55,7 @@ export default function NewResearch() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           className="block w-full pl-12 pr-32 py-5 text-lg border border-slate-200 rounded-2xl shadow-sm focus:ring-4 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all placeholder:text-slate-400"
-          placeholder="e.g., Explain Quantum Computing in simple terms..."
+          placeholder="e.g., Explain Quantum Computing in Simple Terms..."
           required
         />
         <div className="absolute inset-y-2 right-2">

@@ -98,7 +98,10 @@ class LLMClient:
             headers=headers,
             timeout=LLMConfig.TIMEOUT_SECONDS
         )
-        response.raise_for_status()
+        if response.status_code != 200:
+            print("OPENAI STATUS:", response.status_code)
+            print("OPENAI RESPONSE:", response.text)
+            response.raise_for_status()
         data = response.json()
         return data["choices"][0]["message"]["content"]
 

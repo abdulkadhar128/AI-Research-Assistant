@@ -6,6 +6,7 @@ import { ResearchService } from '../services/api';
 import { Report } from '../types/report';
 import QualityBadge from '../components/QualityBadge';
 import CitationList from '../components/CitationList';
+import { formatReportDateTime } from '../utils/date';
 
 export default function ReportView() {
   const { id } = useParams<{ id: string }>();
@@ -75,9 +76,7 @@ export default function ReportView() {
     );
   }
 
-  const dateStr = new Date(report.created_at).toLocaleString(undefined, {
-    dateStyle: 'medium', timeStyle: 'short'
-  });
+  const dateStr = formatReportDateTime(report.created_at);
 
   return (
     <div className="max-w-4xl mx-auto pb-20 animate-in fade-in duration-500">

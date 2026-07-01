@@ -64,11 +64,16 @@ export default function History() {
             <ReportCard key={report.id} report={report} />
           ))}
         </div>
-      ) : (
+      ) : reports.length === 0 ? (
+        <div className="text-center py-20 bg-white rounded-xl border border-slate-200 border-dashed">
+          <p className="text-slate-700 font-semibold text-lg">No research reports available yet.</p>
+          <p className="text-slate-500 text-sm mt-2">Generate your first report to see results here.</p>
+        </div>
+      ) : filteredReports.length === 0 ? (
         <div className="text-center py-20 bg-white rounded-xl border border-slate-200 border-dashed">
           <p className="text-slate-500 text-lg">No reports found matching your search.</p>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

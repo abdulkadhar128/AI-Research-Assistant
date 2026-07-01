@@ -13,6 +13,7 @@ class ReportBase(BaseModel):
     quality_score: float
     review_feedback: str
     citations: Optional[str] = ""
+    generation_time: Optional[float] = None
 
 
 class ReportCreate(ReportBase):
@@ -22,5 +23,6 @@ class ReportCreate(ReportBase):
 class Report(ReportBase):
     id: int
     created_at: datetime
+    generation_time: Optional[float] = None
 
     model_config = ConfigDict(from_attributes=True)

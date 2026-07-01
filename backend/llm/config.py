@@ -87,3 +87,8 @@ print("LLM Provider =", LLMConfig.PROVIDER)
 print("Gemini Model =", LLMConfig.GEMINI_MODEL)
 print("Gemini Key Loaded =", bool(LLMConfig.GEMINI_API_KEY))
 print("=" * 50)
+
+print("LLM_PROVIDER ENV =", os.getenv("LLM_PROVIDER"))
+print("OPENAI_API_KEY Loaded =", bool(LLMConfig.OPENAI_API_KEY))
+print("OPENAI_MODEL =", LLMConfig.OPENAI_MODEL)
+print("Provider =", LLMConfig.PROVIDER)

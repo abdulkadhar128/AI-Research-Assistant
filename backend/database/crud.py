@@ -8,7 +8,8 @@ def create_report(db: Session, report: schemas.ReportCreate):
         report=report.report,
         quality_score=report.quality_score,
         review_feedback=report.review_feedback,
-        citations=report.citations
+        citations=report.citations,
+        generation_time=report.generation_time
     )
     db.add(db_report)
     db.commit()

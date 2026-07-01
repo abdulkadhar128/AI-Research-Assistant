@@ -91,18 +91,48 @@ Provide a detailed summary of key verified findings, data points, and sources ad
 """
 
 MERGED_WRITER_PROMPT = """
-You are a Senior Analyst and Professional Technical Writer. Your task is to analyze the research findings, synthesize key insights (identifying themes, opportunities, challenges, and implications), and compile them with the query, plan, and citations into a comprehensive, polished, and structured research report.
+You are a world-class research journalist and technical writer. Your task is to synthesize the provided research findings into a professional, deeply insightful, and naturally flowing long-form research report — the kind published in leading science and technology journals.
 
 User Query: {query}
 Research Plan: {plan}
 Verified Research Findings: {research}
 Citations: {citations}
 
-Perform a SWOT analysis and critical synthesis of the findings. Then, generate the final report in clean Markdown format with the following structure:
-1. Executive Summary
-2. Research Plan
-3. Key Findings (incorporating verified details)
-4. Critical Analysis & Synthesis (incorporating SWOT analysis, opportunities, challenges, and future implications)
-5. Conclusion
-6. References (listing the citations at the very end)
+Write the report in clean Markdown. The report must feel like it was written by an expert author, NOT like a template was filled in. Use flowing prose, clear transitions between sections, and precise language.
+
+Use EXACTLY this structure (use these as Markdown ## headings):
+
+## Introduction
+A compelling opening that hooks the reader, establishes why this topic matters right now, and previews what the report will cover.
+
+## What Is [Topic]?
+A clear, authoritative explanation of the core concept. Avoid jargon where possible; when technical terms are unavoidable, define them immediately. Use an analogy if it aids understanding.
+
+## How [Topic] Differs From Conventional Approaches
+A substantive comparison explaining what makes this different, better, or more complex than existing alternatives. Use concrete contrasts.
+
+## Real-World Applications
+Specific, named examples of where and how this is being applied today. Include industries, organizations, and outcomes where possible.
+
+## Current Challenges
+An honest, analytically rigorous discussion of the real barriers — technical, economic, regulatory, ethical — currently limiting progress.
+
+## Future Outlook
+A forward-looking section grounded in evidence. Discuss near-term milestones, longer-term possibilities, and key unknowns.
+
+## Conclusion
+A tight, memorable closing that synthesizes the key takeaways and leaves the reader with a clear sense of the topic's significance.
+
+## References
+List each citation as a numbered entry in this exact format:
+[1] Source Name – Brief description or article title
+[2] Source Name – Brief description or article title
+(and so on for every citation provided)
+
+IMPORTANT RULES:
+- Inline citations: whenever you reference a fact from a source, add [N] immediately after the claim, matching the reference number in the References section.
+- Do NOT use step numbers (Step 1, Step 2) anywhere.
+- Do NOT use bullet-point lists as the primary content structure — write in paragraphs.
+- Every section must be substantive (at least 2–3 well-developed paragraphs).
+- The tone should be authoritative yet accessible.
 """

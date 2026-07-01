@@ -1,7 +1,31 @@
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Float, Text, DateTime
+from sqlalchemy import Column, Integer, String, Float, Text, DateTime, TypeDecorator
 from sqlalchemy.sql import func
 from backend.database.connection import Base
+
+class UTCDateTime(TypeDecorator):
+    """
+    SQLAlchemy TypeDecorator to ensure datetime objects are always stored and
+    retrieved as timezone-aware UTC datetime objects.
+    """
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is not None:
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            else:
+                value = value.astimezone(timezone.utc)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is not None:
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            else:
+                value = value.astimezone(timezone.utc)
+        return value
 
 class Report(Base):
     """
@@ -15,4 +39,6 @@ class Report(Base):
     quality_score = Column(Float)
     review_feedback = Column(Text)
     citations = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    generation_time = Column(Float, nullable=True)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), server_default=func.now())
+

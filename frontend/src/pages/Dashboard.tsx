@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { FileText, Star, CalendarDays, Plus, Timer } from 'lucide-react';
 import { ResearchService } from '../services/api';
 import { Report } from '../types/report';
 
@@ -7,7 +8,10 @@ export default function Dashboard() {
   const [recentReports, setRecentReports] = useState<Report[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [avgScore, setAvgScore] = useState(0);
+  const [weekCount, setWeekCount] = useState(0);
+  const [avgGenTime, setAvgGenTime] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -17,6 +21,14 @@ export default function Dashboard() {
         if (data.length > 0) {
           const sum = data.reduce((acc, r) => acc + r.quality_score, 0);
           setAvgScore(sum / data.length);
+          const oneWeekAgo = new Date();
+          oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+          setWeekCount(data.filter(r => new Date(r.created_at) >= oneWeekAgo).length);
+          const timed = data.filter(r => r.generation_time != null);
+          if (timed.length > 0) {
+            const tSum = timed.reduce((acc, r) => acc + (r.generation_time ?? 0), 0);
+            setAvgGenTime(tSum / timed.length);
+          }
         }
         setRecentReports(data.slice(0, 5)); // Show top 5
       } catch (err) {
@@ -34,15 +46,45 @@ export default function Dashboard() {
         <h1 className="text-3xl font-bold text-slate-900">Dashboard</h1>
       </div>
 
-      {/* Stats Board matching mockup */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm flex flex-col justify-center">
-          <p className="text-slate-500 font-medium mb-1">Total Reports</p>
-          <p className="text-4xl font-extrabold text-primary-600">{loading ? '-' : totalCount}</p>
+      {/* Stats Board */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
+        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm flex items-center gap-4">
+          <div className="p-3 bg-primary-50 rounded-xl">
+            <FileText className="w-6 h-6 text-primary-600" />
+          </div>
+          <div>
+            <p className="text-slate-500 text-sm font-medium">Total Reports</p>
+            <p className="text-3xl font-extrabold text-slate-900">{loading ? '-' : totalCount}</p>
+          </div>
         </div>
-        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm flex flex-col justify-center">
-          <p className="text-slate-500 font-medium mb-1">Avg Score</p>
-          <p className="text-4xl font-extrabold text-emerald-600">{loading ? '-' : avgScore.toFixed(1)}</p>
+        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm flex items-center gap-4">
+          <div className="p-3 bg-emerald-50 rounded-xl">
+            <Star className="w-6 h-6 text-emerald-600" />
+          </div>
+          <div>
+            <p className="text-slate-500 text-sm font-medium">Average Quality Score</p>
+            <p className="text-3xl font-extrabold text-slate-900">{loading ? '-' : avgScore.toFixed(1)}</p>
+          </div>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm flex items-center gap-4">
+          <div className="p-3 bg-violet-50 rounded-xl">
+            <CalendarDays className="w-6 h-6 text-violet-600" />
+          </div>
+          <div>
+            <p className="text-slate-500 text-sm font-medium">Reports This Week</p>
+            <p className="text-3xl font-extrabold text-slate-900">{loading ? '-' : weekCount}</p>
+          </div>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm flex items-center gap-4">
+          <div className="p-3 bg-amber-50 rounded-xl">
+            <Timer className="w-6 h-6 text-amber-600" />
+          </div>
+          <div>
+            <p className="text-slate-500 text-sm font-medium">Avg Generation Time</p>
+            <p className="text-3xl font-extrabold text-slate-900">
+              {loading ? '-' : avgGenTime != null ? `${avgGenTime.toFixed(0)}s` : 'N/A'}
+            </p>
+          </div>
         </div>
       </div>
 
@@ -73,7 +115,20 @@ export default function Dashboard() {
             </ul>
           </div>
         ) : (
-          <p className="text-slate-500 bg-white p-6 rounded-xl border border-slate-200">No reports generated yet.</p>
+          <div className="bg-white rounded-xl border border-slate-200 border-dashed p-12 text-center">
+            <div className="inline-flex items-center justify-center p-3 bg-primary-50 rounded-2xl mb-4">
+              <FileText className="w-8 h-8 text-primary-500" />
+            </div>
+            <p className="text-slate-700 font-semibold text-lg mb-1">No reports generated yet.</p>
+            <p className="text-slate-500 text-sm mb-6">Start by asking a question and let our AI agents do the research.</p>
+            <button
+              onClick={() => navigate('/new')}
+              className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary-600 text-white font-medium rounded-xl hover:bg-primary-700 transition-colors shadow-sm"
+            >
+              <Plus className="w-4 h-4" />
+              Generate Your First Report
+            </button>
+          </div>
         )}
       </div>
     </div>
