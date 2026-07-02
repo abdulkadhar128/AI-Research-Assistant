@@ -1,19 +1,21 @@
+"""
+Legacy Analyst node — superseded by the Writer Agent.
+
+Analysis and SWOT evaluation are now integrated directly into the Writer's
+system prompt (see backend.llm.prompts.WRITER_TEMPLATE → ## Analysis section).
+Kept as a stub to prevent ImportError.
+"""
+
+import logging
 from backend.graph.state import ResearchState
-from backend.llm.client import LLMClient
-from backend.llm.prompts import ANALYST_PROMPT
+
+logger = logging.getLogger(__name__)
+
 
 def analyst_node(state: ResearchState) -> dict:
-    """
-    Analyst node that processes research findings and synthesizes key insights.
-
-    Args:
-        state (ResearchState): The current state of the research workflow.
-
-    Returns:
-        dict: A dictionary containing the updated 'analysis' key.
-    """
-    research = state.get("fact_checked_research", "")
-    client = LLMClient()
-    prompt = ANALYST_PROMPT.format(research=research)
-    analysis = client.generate(prompt=prompt, system_instruction="Analysis generation constraint")
-    return {"analysis": analysis}
+    """No-op stub. Returns state unchanged."""
+    logger.warning(
+        "analyst_node called but is deprecated. "
+        "Analysis is now integrated into writer_node."
+    )
+    return {}

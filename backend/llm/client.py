@@ -1,315 +1,371 @@
+"""
+LangChain-based LLM Service for the AI Research Assistant.
+
+This module provides a single `LangChainLLMService` class that:
+  - Routes to ChatOpenAI, ChatGoogleGenerativeAI, or ChatGroq based on LLMConfig.PROVIDER
+  - Preserves the SQLite-backed CacheService for prompt deduplication (live providers only)
+  - Falls back to a rich deterministic mock generator for offline/testing mode
+  - Exposes `.invoke(messages)` returning an AIMessage-compatible object with `.content`
+  - Exposes `.get_llm()` for callers that need the raw LangChain chat model object
+
+Both `LLMClient` and `LangChainChatWrapper` are aliased to this class for
+backwards-compatibility with any remaining import sites.
+"""
+
+import json
 import re
 import logging
 import time
-import httpx
-from typing import Optional
+from typing import List, Optional, Any
+
 from backend.llm.config import LLMConfig
 
 logger = logging.getLogger(__name__)
 
-class LLMClient:
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+class _MockMessage:
+    """AIMessage-compatible container returned by the mock provider."""
+    type = "ai"
+
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"MockMessage(content={self.content[:80]!r}...)"
+
+
+def _extract_messages(messages: List[Any]) -> tuple[str, str]:
     """
-    Unified LLM Client providing a single abstraction layer for OpenAI, Gemini, and Groq.
-    Supports retry logic, timeout protection, and falls back to mock logic if configured.
+    Extract (system_instruction, user_prompt) from a list of LangChain messages.
+    Handles both LangChain message objects (.type/.content) and (role, content) tuples.
     """
-    def __init__(self, model_name: Optional[str] = None):
-        self.model_name = model_name
+    system_instruction = ""
+    user_prompt = ""
+    for msg in messages:
+        if isinstance(msg, tuple):
+            role, content = msg
+        else:
+            role = getattr(msg, "type", getattr(msg, "role", ""))
+            content = getattr(msg, "content", "")
 
-    def generate(self, prompt: str, system_instruction: str = "") -> str:
+        role_lower = str(role).lower()
+        if "system" in role_lower:
+            system_instruction = content
+        elif role_lower in ("human", "user", "humanmessage"):
+            user_prompt = content
+    return system_instruction, user_prompt
+
+
+def _extract_topic(system_instruction: str, user_prompt: str) -> str:
+    """
+    Reliably extract the research topic from the combined prompt text.
+
+    Tries multiple patterns in priority order. Designed to work with the
+    canonical 'Topic: {topic}' and 'User Query: {topic}' prefixes used in
+    prompts.py, and also with legacy prompt formats.
+
+    Returns 'Unknown Topic' only as a true last resort — never silently wrong.
+    """
+    combined = system_instruction + "\n" + user_prompt
+
+    # Priority 1 — explicit "Topic: ..." label (Writer, Planner templates)
+    m = re.search(r'(?:^|\n)Topic:\s+([^\n]+)', combined, re.IGNORECASE | re.MULTILINE)
+    if m:
+        return m.group(1).strip().strip('"').strip("'")
+
+    # Priority 2 — "User Query: ..." label (Intent Analyzer template)
+    m = re.search(r'(?:^|\n)User Query:\s+([^\n]+)', combined, re.IGNORECASE | re.MULTILINE)
+    if m:
+        return m.group(1).strip().strip('"').strip("'")
+
+    # Priority 3 — "query: ..." in user_prompt (any remaining format)
+    m = re.search(r'(?:^|\n)(?:query|subject):\s+([^\n]+)', user_prompt, re.IGNORECASE | re.MULTILINE)
+    if m:
+        return m.group(1).strip().strip('"').strip("'")
+
+    # Priority 4 — quoted string in the user prompt (last resort)
+    m = re.search(r'["\']([^"\']{3,})["\']', user_prompt)
+    if m:
+        return m.group(1).strip()
+
+    print("[WARN] _extract_topic: could not extract topic from prompt. Returning 'Unknown Topic'.")
+    return "Unknown Topic"
+
+
+# ---------------------------------------------------------------------------
+# Mock provider — deterministic, topic-aware responses for offline / CI testing
+# ---------------------------------------------------------------------------
+
+def _generate_mock(system_instruction: str, user_prompt: str) -> str:
+    """
+    Returns deterministic mock LLM output keyed by the agent archetype.
+    The topic is extracted using _extract_topic() which reliably finds
+    'Topic:' or 'User Query:' labels in the prompt.
+    """
+    topic = _extract_topic(system_instruction, user_prompt)
+    combined = system_instruction + "\n" + user_prompt
+
+    print(f"[MOCK LLM] Generating response for topic: '{topic}'")
+
+    # --- Intent Analyzer ---
+    if "Intent Analysis" in system_instruction or "User Query:" in user_prompt:
+        print(f"[MOCK LLM] Archetype: Intent Analyzer | Topic: '{topic}'")
+        return json.dumps({
+            "confidence": 0.92,
+            "interpretations": [
+                f"Research and explanation of {topic}",
+                f"Technical deep-dive into {topic}",
+            ],
+            "clarification_prompt": "",
+        })
+
+    # --- Planner ---
+    if "Research Planner" in system_instruction or (
+        "Topic:" in user_prompt and "research plan" in user_prompt.lower()
+    ):
+        print(f"[MOCK LLM] Archetype: Planner | Topic: '{topic}'")
+        return (
+            f"1. Define the core concepts and scope of '{topic}'.\n"
+            f"2. Investigate the historical development and key milestones of '{topic}'.\n"
+            f"3. Identify current state-of-the-art techniques and leading approaches in '{topic}'.\n"
+            f"4. Examine real-world applications and industry adoption of '{topic}'.\n"
+            f"5. Analyse limitations, challenges, and open research problems in '{topic}'.\n"
+            f"6. Explore emerging trends and future directions for '{topic}'."
+        )
+
+    # --- Writer ---
+    if "technical writer" in system_instruction.lower() and "Topic:" in user_prompt:
+        print(f"[MOCK LLM] Archetype: Writer | Topic: '{topic}'")
+        # Extract sub-sections from the writer prompt for richer mock output
+        plan_m = re.search(r'Research Plan:\n(.*?)(?=\n\nVerified Sources:)', user_prompt, re.DOTALL)
+        src_m  = re.search(r'Verified Sources:\n(.*?)(?=\n\nCitations bibliography:)', user_prompt, re.DOTALL)
+        cit_m  = re.search(r'Citations bibliography:\n(.*?)$', user_prompt, re.DOTALL)
+
+        plan     = plan_m.group(1).strip() if plan_m else f"Research objectives for {topic}"
+        sources  = src_m.group(1).strip()  if src_m  else f"Source data for {topic}"
+        citations = cit_m.group(1).strip() if cit_m  else "[1] Wikipedia — https://en.wikipedia.org"
+
+        return (
+            f"# {topic}\n\n"
+            f"## Introduction\n"
+            f"This report examines '{topic}' through a structured research methodology combining "
+            f"web search, verification, and analytical synthesis.\n\n"
+            f"## Background\n"
+            f"Research objectives:\n{plan}\n\n"
+            f"## Key Findings\n"
+            f"The following sources were consulted:\n{sources}\n\n"
+            f"## Analysis\n"
+            f"'{topic}' demonstrates significant practical value across multiple domains. "
+            f"Industry adoption has accelerated due to improved tooling and lower barriers "
+            f"to entry [1].\n\n"
+            f"## Future Trends\n"
+            f"Continued research into '{topic}' is expected to yield advances in "
+            f"interpretability, efficiency, and real-world deployment [2].\n\n"
+            f"## Conclusion\n"
+            f"'{topic}' represents a foundational area of study with growing relevance "
+            f"across technology, science, and business applications.\n\n"
+            f"## References\n"
+            f"{citations}"
+        )
+
+    # --- Reviewer ---
+    if "editorial reviewer" in system_instruction.lower():
+        print(f"[MOCK LLM] Archetype: Reviewer")
+        return json.dumps({
+            "accuracy":  8.5,
+            "coverage":  8.0,
+            "clarity":   8.3,
+            "citations": 7.8,
+            "overall":   8.15,
+            "feedback": (
+                "The report covers the core aspects well. To improve: (1) add more inline "
+                "citations in the Analysis section; (2) expand the Future Trends section with "
+                "concrete timelines; (3) ensure every claim in Key Findings has a [N] reference."
+            ),
+        })
+
+    # Fallback — should never be reached with well-formed prompts
+    print(f"[WARN MOCK LLM] No archetype matched. system='{system_instruction[:60]}...'")
+    return f"Research overview of: {topic}"
+
+
+# ---------------------------------------------------------------------------
+# LangChainLLMService — primary public interface
+# ---------------------------------------------------------------------------
+
+class LangChainLLMService:
+    """
+    Production-ready LangChain LLM service for the AI Research Assistant.
+
+    Supports OpenAI (ChatOpenAI), Google Gemini (ChatGoogleGenerativeAI),
+    Groq (ChatGroq), and an offline Mock provider.
+
+    Usage
+    -----
+    ```python
+    from backend.llm.client import LangChainLLMService
+    from backend.llm.config import LLMConfig
+    from backend.llm.prompts import PLANNER_TEMPLATE
+
+    service  = LangChainLLMService(model_name=LLMConfig.get_fast_model())
+    messages = PLANNER_TEMPLATE.format_messages(topic="Machine Learning")
+    response = service.invoke(messages)   # → AIMessage with .content str
+    print(response.content)
+    ```
+    """
+
+    def __init__(
+        self,
+        model_name: Optional[str] = None,
+        temperature: float = 0.2,
+        json_mode: bool = False,
+    ) -> None:
+        self.model_name   = model_name
+        self.temperature  = temperature
+        self.json_mode    = json_mode
+        self._llm: Optional[Any] = None
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def get_llm(self) -> Any:
         """
-        Generates content from the configured LLM provider.
-
-        Args:
-            prompt: The formatted user prompt.
-            system_instruction: The system prompt constraint instruction.
-
-        Returns:
-            The generated text content.
+        Return the underlying LangChain chat model (lazy-initialised).
+        Useful when callers want to build chains with the `|` operator.
         """
-        model = self.model_name or ""
-        # Check cache first
-        from backend.services.cache_service import CacheService
-        cache_key = f"{prompt}|||{system_instruction}|||{model}"
-        cached_res = CacheService.get("llm", cache_key)
-        if cached_res:
-            return cached_res
+        if self._llm is None:
+            self._llm = self._build_llm()
+        return self._llm
 
+    def invoke(self, messages: List[Any]) -> Any:
+        """
+        Invoke the LLM with the supplied LangChain message list.
+
+        Parameters
+        ----------
+        messages : list
+            LangChain message objects or (role, content) tuples produced by
+            ChatPromptTemplate.format_messages().
+
+        Returns
+        -------
+        Object with a `.content: str` attribute (AIMessage or _MockMessage).
+        """
         provider = LLMConfig.PROVIDER.lower()
-        if provider == "mock":
-            res = self._generate_mock(prompt, system_instruction)
-            CacheService.set("llm", cache_key, res)
-            return res
+        system_instruction, user_prompt = _extract_messages(messages)
 
-        last_error = None
+        # ---------- Mock provider — no caching, always fresh ----------
+        if provider == "mock":
+            content = _generate_mock(system_instruction, user_prompt)
+            return _MockMessage(content)
+
+        # ---------- Cache check (live providers only) ----------
+        from backend.services.cache_service import CacheService
+        cache_key = f"{provider}|||{self.model_name}|||{system_instruction[:200]}|||{user_prompt[:400]}"
+        cached = CacheService.get("llm_lc", cache_key)
+        if cached:
+            logger.info("LangChainLLMService: cache HIT for provider=%s", provider)
+            return _MockMessage(cached)
+
+        # ---------- Live providers with exponential-backoff retry ----------
+        last_error: Optional[Exception] = None
         for attempt in range(1, LLMConfig.MAX_RETRIES + 1):
             try:
-                if provider == "openai":
-                    res = self._call_openai(prompt, system_instruction)
-                elif provider == "gemini":
-                    res = self._call_gemini(prompt, system_instruction)
-                elif provider == "groq":
-                    res = self._call_groq(prompt, system_instruction)
-                else:
-                    raise ValueError(f"Unsupported LLM provider: {provider}")
-                
+                llm = self.get_llm()
+                response = llm.invoke(messages)
                 # Cache successful response
-                CacheService.set("llm", cache_key, res)
-                return res
-            except Exception as e:
+                CacheService.set("llm_lc", cache_key, response.content)
+                return response
+            except Exception as exc:
+                last_error = exc
                 logger.warning(
-                    f"LLM API call failed on provider '{provider}' (attempt {attempt}/{LLMConfig.MAX_RETRIES}): {str(e)}"
+                    "LangChainLLMService: provider=%s attempt=%d/%d error=%s",
+                    provider, attempt, LLMConfig.MAX_RETRIES, exc,
                 )
-                last_error = e
                 if attempt < LLMConfig.MAX_RETRIES:
-                    # Exponential backoff: sleep 2, 4, 8...
-                    time.sleep(2 ** attempt)
+                    time.sleep(2 ** attempt)   # 2 s, 4 s, 8 s …
 
         raise RuntimeError(
-            f"LLM generation failed for provider '{provider}' after {LLMConfig.MAX_RETRIES} attempts. "
-            f"Last error: {str(last_error)}"
+            f"LLM generation failed for provider='{provider}' after "
+            f"{LLMConfig.MAX_RETRIES} attempts. Last error: {last_error}"
         )
 
-    def _call_openai(self, prompt: str, system_instruction: str) -> str:
-        if not LLMConfig.OPENAI_API_KEY:
-            raise ValueError("OPENAI_API_KEY environment variable is not configured.")
+    # ------------------------------------------------------------------
+    # Private — model construction
+    # ------------------------------------------------------------------
 
-        headers = {
-            "Authorization": f"Bearer {LLMConfig.OPENAI_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        messages = []
-        if system_instruction:
-            messages.append({"role": "system", "content": system_instruction})
-        messages.append({"role": "user", "content": prompt})
+    def _build_llm(self) -> Any:
+        """Instantiate and return the appropriate LangChain chat model."""
+        provider = LLMConfig.PROVIDER.lower()
 
-        payload = {
-            "model": self.model_name or LLMConfig.OPENAI_MODEL,
-            "messages": messages,
-            "temperature": 0.2
-        }
-
-        # Handle JSON mode if prompt requests JSON output
-        if "json" in prompt.lower() or "json" in system_instruction.lower():
-            payload["response_format"] = {"type": "json_object"}
-
-        response = httpx.post(
-            "https://api.openai.com/v1/chat/completions",
-            json=payload,
-            headers=headers,
-            timeout=LLMConfig.TIMEOUT_SECONDS
-        )
-        if response.status_code != 200:
-            print("OPENAI STATUS:", response.status_code)
-            print("OPENAI RESPONSE:", response.text)
-            response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
-
-    def _call_groq(self, prompt: str, system_instruction: str) -> str:
-        if not LLMConfig.GROQ_API_KEY:
-            raise ValueError("GROQ_API_KEY environment variable is not configured.")
-
-        headers = {
-            "Authorization": f"Bearer {LLMConfig.GROQ_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        messages = []
-        if system_instruction:
-            messages.append({"role": "system", "content": system_instruction})
-        messages.append({"role": "user", "content": prompt})
-
-        payload = {
-            "model": self.model_name or LLMConfig.GROQ_MODEL,
-            "messages": messages,
-            "temperature": 0.2
-        }
-
-        if "json" in prompt.lower() or "json" in system_instruction.lower():
-            payload["response_format"] = {"type": "json_object"}
-
-        response = httpx.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            json=payload,
-            headers=headers,
-            timeout=LLMConfig.TIMEOUT_SECONDS
-        )
-        response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
-
-    def _call_gemini(self, prompt: str, system_instruction: str) -> str:
-        if not LLMConfig.GEMINI_API_KEY:
-            raise ValueError("GEMINI_API_KEY environment variable is not configured.")
-
-        model = self.model_name or LLMConfig.GEMINI_MODEL
-
-        url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{model}:generateContent?key={LLMConfig.GEMINI_API_KEY}"
-        )
-
-        print("\n" + "=" * 80)
-        print("GEMINI DEBUG")
-        print("Provider:", LLMConfig.PROVIDER)
-        print("Model:", model)
-        print("Prompt Length:", len(prompt))
-        print("System Length:", len(system_instruction))
-        print("=" * 80)
-
-        payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {
-                            "text": prompt
-                        }
-                    ]
-                }
-            ],
-            "generationConfig": {
-                "temperature": 0.2,
-                "maxOutputTokens": 2048
-            }
-        }
-
-        if system_instruction:
-            payload["systemInstruction"] = {
-                "parts": [
-                    {
-                        "text": system_instruction
-                    }
-                ]
-            }
-
-        headers = {
-            "Content-Type": "application/json"
-        }
-
-        timeout = httpx.Timeout(
-            connect=30.0,
-            read=120.0,
-            write=30.0,
-            pool=30.0
-        )
-
-        response = httpx.post(
-            url,
-            json=payload,
-            headers=headers,
-            timeout=timeout
-        )
-
-        print("\nGEMINI STATUS:", response.status_code)
-        print("\nGEMINI RESPONSE:")
-        print(response.text[:3000])
-
-        if response.status_code == 429:
-            raise RuntimeError(
-                "Gemini rate limit reached. Too many requests sent to Gemini."
+        if provider == "openai":
+            from langchain_openai import ChatOpenAI
+            if not LLMConfig.OPENAI_API_KEY:
+                raise ValueError("OPENAI_API_KEY is not set in the environment.")
+            kwargs: dict = dict(
+                model=self.model_name or LLMConfig.OPENAI_MODEL,
+                api_key=LLMConfig.OPENAI_API_KEY,
+                temperature=self.temperature,
+                timeout=LLMConfig.TIMEOUT_SECONDS,
+                max_retries=0,   # retries handled by our own loop
             )
+            if self.json_mode:
+                kwargs["model_kwargs"] = {"response_format": {"type": "json_object"}}
+            return ChatOpenAI(**kwargs)
 
-        response.raise_for_status()
-
-        data = response.json()
-
-        if "candidates" not in data:
-            raise RuntimeError(
-                f"Gemini response missing candidates field: {data}"
-            )
-
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-    def _generate_mock(self, prompt: str, system_instruction: str) -> str:
-        """
-        Simulates generation of text using the mock provider archetype matches.
-        """
-        logger.info("Generating content using mock provider...")
-
-        # Simple extraction of query if present
-        query_match = re.search(r"User Query:\s*(.*)", prompt, re.IGNORECASE)
-        query = query_match.group(1).strip() if query_match else "Selected Topic"
-
-        if "Planner" in prompt or "Research Planner" in prompt or "Plan" in system_instruction:
-            return (
-                f"1. Define and clarify the core concepts of '{query}'.\n"
-                f"2. Gather key historical details, architectures, and state-of-the-art developments for '{query}'.\n"
-                f"3. Critically analyze limitations, benefits, and future trends of '{query}'."
-            )
-        elif "Researcher" in prompt or "Findings" in system_instruction:
-            search_match = re.search(r"Search Results:\s*(.*?)(?=\n\n|\n[A-Z]|$)", prompt, re.DOTALL | re.IGNORECASE)
-            search_data = search_match.group(1).strip() if search_match else "No search results provided"
-
-            return (
-                f"- Definition: Gathered comprehensive documentation regarding '{query}' based on findings: [{search_data}].\n"
-                f"- Architecture & Execution: Analyzed standard setups, technical workflows, and popular implementation stacks.\n"
-                f"- Core findings: Identified major players, standard models, and operational patterns for '{query}'."
-            )
-        elif "Fact Checker" in prompt or "Fact-Checking" in system_instruction:
-            research_match = re.search(r"Research Findings:\s*(.*?)(?=\n\n|\n[A-Z]|$|Search Results:)", prompt, re.DOTALL | re.IGNORECASE)
-            research_data = research_match.group(1).strip() if research_match else f"General facts gathered about {query}"
-            return (
-                f"[Fact-Checked Findings for '{query}']:\n"
-                f"1. Verified: {research_data}\n"
-                f"2. Consistency Check: All claims matched against search results successfully.\n"
-                f"3. Exclusions: Removed 0 unsupported claims."
-            )
-        elif "Analyst" in prompt or "Analysis" in system_instruction:
-            return (
-                f"- Advantages: High efficiency, modularity, and integration potential for '{query}'.\n"
-                f"- Drawbacks & Challenges: Requires careful tuning, suffers from edge-case failure modes, and needs continuous evaluation.\n"
-                f"- Emerging Paradigm: Shift towards automated debugging, advanced agent routing, and orchestration layers."
-            )
-        elif "Writer" in prompt or "Report" in system_instruction:
-            plan_match = re.search(r"Research Plan:\s*(.*?)(?=\n\n|\n[A-Z]|$|Search Results:)", prompt, re.DOTALL | re.IGNORECASE)
-            search_match = re.search(r"Search Results:\s*(.*?)(?=\n\n|\n[A-Z]|$|Research Findings:)", prompt, re.DOTALL | re.IGNORECASE)
-            research_match = re.search(r"Research Findings:\s*(.*?)(?=\n\n|\n[A-Z]|$|Fact Checked Findings:)", prompt, re.DOTALL | re.IGNORECASE)
-            fact_checked_match = re.search(r"Fact Checked Findings:\s*(.*?)(?=\n\n|\n[A-Z]|$|Critical Analysis:)", prompt, re.DOTALL | re.IGNORECASE)
-            analysis_match = re.search(r"Critical Analysis:\s*(.*?)(?=\n\n|\n[A-Z]|$|Citations:)", prompt, re.DOTALL | re.IGNORECASE)
-            citations_match = re.search(r"Citations:\s*(.*?)(?=\n\n|\n[A-Z]|$)", prompt, re.DOTALL | re.IGNORECASE)
-
-            plan = plan_match.group(1).strip() if plan_match else f"Investigation outline for {query}"
-            search_results = search_match.group(1).strip() if search_match else f"Search data for {query}"
-            research = research_match.group(1).strip() if research_match else f"General facts gathered about {query}"
-            fact_checked = fact_checked_match.group(1).strip() if fact_checked_match else f"Fact-checked facts gathered about {query}"
-            analysis = analysis_match.group(1).strip() if analysis_match else f"Synthesized SWOT analysis of {query}"
-            citations = citations_match.group(1).strip() if citations_match else f"[1] Example Source\nhttp://example.com"
-
-            return (
-                f"# Research Report: {query}\n\n"
-                f"## 1. Executive Summary\n"
-                f"This document provides a production-ready, compiled analysis of '{query}'. The report was synthesized via a multi-agent workflow consisting of Planning, Search Retrieval, Research, Fact Checking, Critical Analysis, and professional Technical Writing.\n\n"
-                f"## 2. Research Plan\n"
-                f"{plan}\n\n"
-                f"## 3. Search Results\n"
-                f"{search_results}\n\n"
-                f"## 4. Key Findings\n"
-                f"{research}\n\n"
-                f"## 5. Fact Checked Findings\n"
-                f"{fact_checked}\n\n"
-                f"## 6. Synthesized Analysis\n"
-                f"{analysis}\n\n"
-                f"## 7. Conclusion\n"
-                f"The analysis indicates that '{query}' represents a significant technology paradigm. Organizations utilizing it stand to benefit from reduced overhead and increased technical capability, provided typical failure modes are appropriately handled.\n\n"
-                f"## 8. References\n"
-                f"{citations}"
-            )
-        elif "Reviewer" in prompt or "Review" in system_instruction:
-            # Detect JSON format requests and return structured data
-            if "json" in prompt.lower() or "json" in system_instruction.lower():
-                return (
-                    f'{{\n'
-                    f'  "review_feedback": "Review Feedback for \'{query}\' Report:\\n- Structure: Excellent.\\n- Clarity: High.\\n- Completeness: Detailed.",\n'
-                    f'  "quality_score": 9.2\n'
-                    f'}}'
+        elif provider == "gemini":
+            try:
+                from langchain_google_genai import ChatGoogleGenerativeAI
+            except ImportError:
+                raise ImportError(
+                    "Install langchain-google-genai to use the Gemini provider:\n"
+                    "  pip install langchain-google-genai"
                 )
-
-            return (
-                f"Review Feedback for '{query}' Report:\n"
-                f"- Structure: Excellent. Clear hierarchy and headers.\n"
-                f"- Clarity: High. Very readable and concise.\n"
-                f"- Completeness: Detailed coverage of all plan items.\n"
-                f"- Research depth: Adequate details and source referencing.\n"
-                f"- Conclusion quality: Strong organizational summary.\n\n"
-                f"Score: 9.2"
+            if not LLMConfig.GEMINI_API_KEY:
+                raise ValueError("GEMINI_API_KEY is not set in the environment.")
+            return ChatGoogleGenerativeAI(
+                model=self.model_name or LLMConfig.GEMINI_MODEL,
+                google_api_key=LLMConfig.GEMINI_API_KEY,
+                temperature=self.temperature,
+                timeout=LLMConfig.TIMEOUT_SECONDS,
+                max_retries=0,
             )
 
-        return "Default Mock Response: No matching prompt archetype identified."
+        elif provider == "groq":
+            try:
+                from langchain_groq import ChatGroq
+            except ImportError:
+                raise ImportError(
+                    "Install langchain-groq to use the Groq provider:\n"
+                    "  pip install langchain-groq"
+                )
+            if not LLMConfig.GROQ_API_KEY:
+                raise ValueError("GROQ_API_KEY is not set in the environment.")
+            return ChatGroq(
+                model=self.model_name or LLMConfig.GROQ_MODEL,
+                api_key=LLMConfig.GROQ_API_KEY,
+                temperature=self.temperature,
+                timeout=LLMConfig.TIMEOUT_SECONDS,
+                max_retries=0,
+            )
+
+        raise ValueError(
+            f"Unsupported LLM provider: '{provider}'. "
+            "Set LLM_PROVIDER to 'openai', 'gemini', 'groq', or 'mock'."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Backwards-compatibility aliases
+# ---------------------------------------------------------------------------
+
+# Old `LLMClient` (raw httpx) is superseded — alias transparently.
+LLMClient = LangChainLLMService
+
+# Old `LangChainChatWrapper` added in a prior session — alias transparently.
+LangChainChatWrapper = LangChainLLMService

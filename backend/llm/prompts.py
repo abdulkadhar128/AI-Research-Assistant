@@ -1,138 +1,168 @@
 """
-Prompts for the AI Research Assistant.
-Contains prompt templates for each node of the LangGraph workflow.
+LangChain ChatPromptTemplate definitions for every agent in the research workflow.
+
+All human messages begin with an explicit "Topic: {topic}" or "User Query: {topic}"
+label so that:
+  1. The LLM always has the topic prominently at the top of its input.
+  2. The offline mock regex can reliably extract the topic regardless of where
+     the topic appears in the combined prompt string.
 """
 
-PLANNER_PROMPT = """
-You are an expert Research Planner. Your task is to design a comprehensive research plan based on the user's query.
+from langchain_core.prompts import ChatPromptTemplate
 
-User Query: {query}
+# ---------------------------------------------------------------------------
+# Intent Analyzer
+# ---------------------------------------------------------------------------
+INTENT_TEMPLATE = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        "You are an Intent Analysis Agent. Determine whether a user's research query "
+        "is clear and specific enough to proceed with automated research.\n\n"
+        "Evaluate for:\n"
+        "1. Specificity — is the subject well-defined?\n"
+        "2. Ambiguity   — could it mean very different things?\n"
+        "3. Scope       — is it researchable (not too vague or nonsensical)?\n\n"
+        "Return ONLY a JSON object with exactly these keys:\n"
+        "{{\n"
+        '  "confidence": <float 0.0-1.0>,\n'
+        '  "interpretations": ["<string>", ...],\n'
+        '  "clarification_prompt": "<string>"\n'
+        "}}\n\n"
+        "Rules:\n"
+        "- confidence = 1.0 → perfectly clear; 0.0 → completely unintelligible.\n"
+        "- interpretations: 2-4 possible meanings (always include the most likely one).\n"
+        "- clarification_prompt: if confidence < 0.7 write a friendly clarification "
+        "request; otherwise set to an empty string.\n"
+        "Output NOTHING outside the JSON object."
+    ),
+    # NOTE: 'User Query: {topic}' prefix is intentional — lets the mock extractor
+    # reliably find the topic without relying on trailing newlines.
+    (
+        "human",
+        "User Query: {topic}\n\n"
+        "Analyze this query for clarity, specificity, and research intent."
+    ),
+])
 
-Provide a structured, step-by-step plan that outlines the key aspects, definitions, history, current state, and future trends that need to be investigated.
-"""
+# ---------------------------------------------------------------------------
+# Planner
+# ---------------------------------------------------------------------------
+PLANNER_TEMPLATE = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        "You are an expert Research Planner. Design a comprehensive, structured research plan.\n\n"
+        "The plan should cover:\n"
+        "- Core definitions and scope of the topic\n"
+        "- Key historical context and evolution\n"
+        "- Current state-of-the-art and leading approaches\n"
+        "- Real-world applications and industry use-cases\n"
+        "- Challenges, limitations, and open problems\n"
+        "- Future trends and outlook\n\n"
+        "Be concise and action-oriented. Number each objective clearly (1., 2., 3., ...).\n"
+        "Do NOT mention Multi-Agent Systems, example topics, or placeholder names — "
+        "focus exclusively on the user's topic."
+    ),
+    # NOTE: 'Topic: {topic}' prefix is the canonical key used by the mock extractor.
+    (
+        "human",
+        "Topic: {topic}\n\n"
+        "Design a step-by-step research plan for the topic above."
+    ),
+])
 
-RESEARCHER_PROMPT = """
-You are an expert Researcher. Your task is to gather facts, data, and information following the provided research plan and search results.
+# ---------------------------------------------------------------------------
+# Verify
+# ---------------------------------------------------------------------------
+VERIFY_TEMPLATE = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        "You are a Verification Agent. Filter the provided search results to ONLY include "
+        "sources that are directly relevant to the user's topic.\n\n"
+        "Return ONLY a JSON array of integers, representing the IDs (1-based index) of the "
+        "relevant sources. If none are relevant, return an empty array [].\n"
+        "Output NOTHING outside the JSON array."
+    ),
+    (
+        "human",
+        "Topic: {topic}\n\n"
+        "Sources:\n{sources_text}\n\n"
+        "Return the array of relevant source IDs:"
+    ),
+])
 
-Research Plan:
-{plan}
+# ---------------------------------------------------------------------------
+# Writer
+# ---------------------------------------------------------------------------
+WRITER_TEMPLATE = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        "You are an expert technical writer producing a comprehensive research report in Markdown.\n\n"
+        "CRITICAL WRITING GUIDELINES — follow strictly:\n"
+        "1. WRITE ABOUT THE EXACT TOPIC provided in the input. Do not drift to related topics.\n"
+        "2. LENGTH: The report must be exactly between 1000 and 1500 words.\n"
+        "3. PRACTICAL explanations: describe how things work in practice, not just definitions.\n"
+        "4. REAL-WORLD EXAMPLES: reference actual companies, products, and events where relevant.\n"
+        "5. AVOID GENERIC CONTENT: every paragraph should add practitioner-level insight.\n"
+        "6. INLINE CITATIONS: every significant claim must include an inline citation "
+        "   like [1], [2], [3] matching the numbered bibliography provided.\n"
+        "7. CONCISE AND DIRECT: no filler phrases.\n"
+        "8. REFERENCES SECTION — CRITICAL RULE:\n"
+        "   - The ## References section must list ONLY the sources provided in the "
+        "   'Citations bibliography' block below.\n"
+        "   - Copy each entry VERBATIM. Do NOT invent, modify, or guess any URLs.\n"
+        "   - Do NOT add sources that are not in the bibliography.\n"
+        "   - Format each entry exactly as: [N] Title — URL\n\n"
+        "Structure the report using EXACTLY these ## section headers (in order):\n"
+        "## Introduction\n"
+        "## Background\n"
+        "## Key Findings\n"
+        "## Analysis\n"
+        "## Future Trends\n"
+        "## Conclusion\n"
+        "## References\n\n"
+        "Start with a single # title line that matches the topic exactly.\n"
+        "The ## References section must copy every entry from the bibliography, "
+        "formatted as: [N] Title — URL"
+    ),
+    (
+        "human",
+        "Topic: {topic}\n\n"
+        "Research Plan:\n{plan}\n\n"
+        "Verified Sources:\n{sources_text}\n\n"
+        "Citations bibliography (copy these VERBATIM into ## References):\n{citations}"
+        "{revision_note}"
+    ),
+])
 
-Search Results:
-{search_results}
 
-Provide a detailed summary of key findings, sources, and data points addressing each aspect of the plan.
-"""
-
-FACT_CHECKER_PROMPT = """
-You are an expert Fact Checker. Your task is to verify the consistency of the research findings against the search results and remove any unsupported claims.
-
-User Query: {query}
-Research Findings:
-{research}
-
-Search Results:
-{search_results}
-
-Provide the fact-checked, verified version of the research findings, highlighting verified details and omitting any contradictions or unverified facts.
-"""
-
-ANALYST_PROMPT = """
-You are a Senior Analyst. Your task is to analyze, synthesize, and evaluate the gathered research findings.
-
-Research Findings:
-{research}
-
-Critically assess the information, identify key themes, opportunities, challenges, and future implications. Provide analytical insights.
-"""
-
-WRITER_PROMPT = """
-You are a Professional Technical Writer. Your task is to compile the user query, plan, search results, research findings, fact checked findings, analysis, and citations into a comprehensive, polished, and structured research report.
-
-User Query: {query}
-Research Plan: {plan}
-Search Results: {search_results}
-Research Findings: {research}
-Fact Checked Findings: {fact_checked_research}
-Critical Analysis: {analysis}
-Citations: {citations}
-
-Generate the final report in clean Markdown format with appropriate headers, bullet points, an executive summary, and a References section at the very end listing the citations.
-"""
-
-REVIEWER_PROMPT = """
-You are an expert Editorial Reviewer. Evaluate the compiled research report on:
-1. Structure
-2. Clarity
-3. Completeness
-4. Research depth
-5. Conclusion quality
-
-Report Content:
-{report}
-
-Return your evaluation ONLY as a JSON object with the following structure:
-{{
-  "review_feedback": "Detailed feedback text addressing structure, clarity, completeness, research depth, and conclusion quality.",
-  "quality_score": 9.2
-}}
-Ensure quality_score is a float between 0.0 and 10.0. Do not include markdown formatting or wrapping outside the JSON object.
-"""
-
-MERGED_RESEARCHER_PROMPT = """
-You are an expert Researcher and Fact Checker. Your task is to gather facts, data, and information following the provided research plan and search results, and verify their consistency in a single step. Omit any contradictions or unverified claims.
-
-Research Plan:
-{plan}
-
-Search Results:
-{search_results}
-
-Provide a detailed summary of key verified findings, data points, and sources addressing each aspect of the plan. Do not include any claims that contradict the search results or cannot be verified.
-"""
-
-MERGED_WRITER_PROMPT = """
-You are a world-class research journalist and technical writer. Your task is to synthesize the provided research findings into a professional, deeply insightful, and naturally flowing long-form research report — the kind published in leading science and technology journals.
-
-User Query: {query}
-Research Plan: {plan}
-Verified Research Findings: {research}
-Citations: {citations}
-
-Write the report in clean Markdown. The report must feel like it was written by an expert author, NOT like a template was filled in. Use flowing prose, clear transitions between sections, and precise language.
-
-Use EXACTLY this structure (use these as Markdown ## headings):
-
-## Introduction
-A compelling opening that hooks the reader, establishes why this topic matters right now, and previews what the report will cover.
-
-## What Is [Topic]?
-A clear, authoritative explanation of the core concept. Avoid jargon where possible; when technical terms are unavoidable, define them immediately. Use an analogy if it aids understanding.
-
-## How [Topic] Differs From Conventional Approaches
-A substantive comparison explaining what makes this different, better, or more complex than existing alternatives. Use concrete contrasts.
-
-## Real-World Applications
-Specific, named examples of where and how this is being applied today. Include industries, organizations, and outcomes where possible.
-
-## Current Challenges
-An honest, analytically rigorous discussion of the real barriers — technical, economic, regulatory, ethical — currently limiting progress.
-
-## Future Outlook
-A forward-looking section grounded in evidence. Discuss near-term milestones, longer-term possibilities, and key unknowns.
-
-## Conclusion
-A tight, memorable closing that synthesizes the key takeaways and leaves the reader with a clear sense of the topic's significance.
-
-## References
-List each citation as a numbered entry in this exact format:
-[1] Source Name – Brief description or article title
-[2] Source Name – Brief description or article title
-(and so on for every citation provided)
-
-IMPORTANT RULES:
-- Inline citations: whenever you reference a fact from a source, add [N] immediately after the claim, matching the reference number in the References section.
-- Do NOT use step numbers (Step 1, Step 2) anywhere.
-- Do NOT use bullet-point lists as the primary content structure — write in paragraphs.
-- Every section must be substantive (at least 2–3 well-developed paragraphs).
-- The tone should be authoritative yet accessible.
-"""
+# ---------------------------------------------------------------------------
+# Reviewer
+# ---------------------------------------------------------------------------
+REVIEWER_TEMPLATE = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        "You are an expert editorial reviewer. Evaluate the provided markdown research report "
+        "across FOUR dimensions, each scored 1.0–10.0.\n\n"
+        "Dimensions:\n"
+        "- accuracy:   Factual correctness of all claims.\n"
+        "- coverage:   How thoroughly the topic is explored.\n"
+        "- clarity:    Writing quality, structure, and readability.\n"
+        "- citations:  Proper inline citations and source relevance.\n\n"
+        "Return ONLY a JSON object with exactly these keys:\n"
+        "{{\n"
+        '  "accuracy":  <float 1.0-10.0>,\n'
+        '  "coverage":  <float 1.0-10.0>,\n'
+        '  "clarity":   <float 1.0-10.0>,\n'
+        '  "citations": <float 1.0-10.0>,\n'
+        '  "overall":   <float — average of the four scores above>,\n'
+        '  "feedback":  "<specific, actionable improvement suggestions>"\n'
+        "}}\n\n"
+        "Rules:\n"
+        "- Output NOTHING outside the JSON object.\n"
+        "- feedback must be specific and actionable, not generic praise.\n"
+        "- Deduct points from citations if inline references are missing.\n"
+        "- overall = (accuracy + coverage + clarity + citations) / 4, rounded to 2 dp.\n"
+        "- Scores must NEVER default to 0. Use 1.0 as the minimum for any dimension."
+    ),
+    ("human", "Evaluate this research report:\n\n{report}"),
+])

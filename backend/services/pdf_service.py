@@ -162,13 +162,20 @@ class PDFService:
         md_elements = PDFService._parse_markdown_to_story(report.report, md_styles)
         story.extend(md_elements)
 
-        # 5. Append references section
-        if getattr(report, "citations", None) and "References" not in report.report:
-            story.append(Spacer(1, 15))
-            story.append(Paragraph("References", section_style))
-            escaped_citations = report.citations.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            formatted_citations = escaped_citations.replace("\n", "<br/>")
-            story.append(Paragraph(formatted_citations, body_style))
+
+        # 5. Append references section from DB citations field (always, since it contains real verified URLs)
+        if getattr(report, "citations", None):
+            # Only add a separate References header if the report body doesn't have one
+            if "References" not in report.report:
+                story.append(Spacer(1, 15))
+                story.append(Paragraph("References", section_style))
+
+            citation_lines = [l for l in report.citations.split("\n") if l.strip()]
+            for cline in citation_lines:
+                escaped = cline.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                story.append(Paragraph(escaped, body_style))
+            story.append(Spacer(1, 6))
+
 
         # Build document
         doc.build(story)

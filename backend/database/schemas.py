@@ -14,6 +14,10 @@ class ReportBase(BaseModel):
     review_feedback: str
     citations: Optional[str] = ""
     generation_time: Optional[float] = None
+    accuracy_score: Optional[float] = None
+    coverage_score: Optional[float] = None
+    clarity_score: Optional[float] = None
+    citations_score: Optional[float] = None
 
 
 class ReportCreate(ReportBase):

@@ -7,6 +7,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 export default function NewResearch() {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingMsg, setLoadingMsg] = useState('Agents are actively researching...');
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
 
@@ -15,13 +16,19 @@ export default function NewResearch() {
     if (!query.trim()) return;
 
     setLoading(true);
+    setLoadingMsg('Starting workflow...');
     setError(null);
 
     try {
-      const response = await ResearchService.runResearch(query);
+      const response = await ResearchService.runResearch(query, (status) => setLoadingMsg(status));
+      if (response.clarification_needed) {
+         setError("Query is too ambiguous. " + (response.clarification_prompt || "Please be more specific."));
+         setLoading(false);
+         return;
+      }
       navigate(`/reports/${response.report_id}`);
     } catch (err: any) {
-      setError(err.response?.data?.detail || "Failed to generate research. Please try again.");
+      setError(err.message || "Failed to generate research. Please try again.");
       setLoading(false);
     }
   };
@@ -29,7 +36,7 @@ export default function NewResearch() {
   if (loading) {
     return (
       <div className="max-w-3xl mx-auto pt-20">
-        <LoadingSpinner message="Agents are actively researching..." />
+        <LoadingSpinner message={loadingMsg} />
       </div>
     );
   }
@@ -61,7 +68,7 @@ export default function NewResearch() {
         <div className="absolute inset-y-2 right-2">
           <button
             type="submit"
-            disabled={!query.trim()}
+            disabled={!query.trim() || loading}
             className="h-full px-6 bg-primary-600 text-white font-medium rounded-xl hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Generate

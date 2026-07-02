@@ -141,8 +141,8 @@ export default function ReportView() {
             </div>
           )}
 
-          {/* Citations block mapped from DB schema */}
-          {report.citations && !report.report.includes("References") && (
+          {/* Citations block — always show the styled clickable references panel */}
+          {report.citations && (
             <CitationList citations={report.citations} />
           )}
         </div>

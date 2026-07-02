@@ -4,7 +4,6 @@ def load_env_file() -> None:
     """
     Helper function to load env values from the workspace root .env file.
     """
-    # Resolve path to the workspace root directory (three levels up from backend/llm/config.py)
     env_path = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "..", ".env")
     )
@@ -26,69 +25,69 @@ def load_env_file() -> None:
 # Load environmental variables before resolving config properties
 load_env_file()
 
+
 class LLMConfig:
     """
     Configuration settings for LLM providers.
+    All values are read from environment variables, with sensible defaults.
     """
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    # --- OpenAI ---
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_MODEL: str  = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    # --- Google Gemini ---
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str   = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
-    GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-    GROQ_MODEL = os.getenv("GROQ_MODEL", "llama3-8b-8192")
+    # --- Groq ---
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    GROQ_MODEL: str   = os.getenv("GROQ_MODEL", "llama3-8b-8192")
 
-    TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT", "30.0"))
-    MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "3"))
-    ENABLE_PROVIDER_FALLBACK = os.getenv("ENABLE_PROVIDER_FALLBACK", "true").lower() == "true"
+    # --- Tavily ---
+    TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "")
 
-    # Resolve provider dynamically based on available environment API keys.
-    # We NEVER fall back to mock unless LLM_PROVIDER is explicitly set to "mock".
-    _raw_provider = os.getenv("LLM_PROVIDER", "").lower()
+    # --- Client settings ---
+    TIMEOUT_SECONDS: float = float(os.getenv("LLM_TIMEOUT", "60.0"))
+    MAX_RETRIES: int       = int(os.getenv("LLM_MAX_RETRIES", "3"))
+
+    # --- Provider auto-selection ---
+    # Precedence: LLM_PROVIDER env → available API key → default to gemini
+    _raw_provider: str = os.getenv("LLM_PROVIDER", "").lower()
     if _raw_provider == "mock":
         PROVIDER = "mock"
-    elif _raw_provider:
+    elif _raw_provider in ("openai", "gemini", "groq"):
         PROVIDER = _raw_provider
     else:
-        if os.getenv("GEMINI_API_KEY", ""):
-            PROVIDER = "gemini"
-        elif os.getenv("OPENAI_API_KEY", ""):
+        # Auto-detect based on which API key is present
+        if os.getenv("OPENAI_API_KEY", ""):
             PROVIDER = "openai"
+        elif os.getenv("GEMINI_API_KEY", ""):
+            PROVIDER = "gemini"
         elif os.getenv("GROQ_API_KEY", ""):
             PROVIDER = "groq"
         else:
-            PROVIDER = "gemini"  # Default to gemini to raise clear API errors on key miss rather than mock fallbacks
+            PROVIDER = "gemini"  # Raises a clear API error rather than silent mock
 
     @classmethod
     def get_fast_model(cls) -> str:
+        """Return the fast/cheap model for the active provider."""
         provider = cls.PROVIDER.lower()
-        if provider == "gemini":
-            return "gemini-2.0-flash-lite"
-        elif provider == "openai":
+        if provider == "openai":
             return "gpt-4o-mini"
+        elif provider == "gemini":
+            return "gemini-2.0-flash-lite"
         elif provider == "groq":
             return "llama3-8b-8192"
         return ""
 
     @classmethod
     def get_quality_model(cls) -> str:
+        """Return the high-quality model for the active provider."""
         provider = cls.PROVIDER.lower()
-        if provider == "gemini":
-            return cls.GEMINI_MODEL
-        elif provider == "openai":
+        if provider == "openai":
             return cls.OPENAI_MODEL
+        elif provider == "gemini":
+            return cls.GEMINI_MODEL
         elif provider == "groq":
             return cls.GROQ_MODEL
         return ""
-
-print("=" * 50)
-print("LLM Provider =", LLMConfig.PROVIDER)
-print("Gemini Model =", LLMConfig.GEMINI_MODEL)
-print("Gemini Key Loaded =", bool(LLMConfig.GEMINI_API_KEY))
-print("=" * 50)
-
-print("LLM_PROVIDER ENV =", os.getenv("LLM_PROVIDER"))
-print("OPENAI_API_KEY Loaded =", bool(LLMConfig.OPENAI_API_KEY))
-print("OPENAI_MODEL =", LLMConfig.OPENAI_MODEL)
-print("Provider =", LLMConfig.PROVIDER)

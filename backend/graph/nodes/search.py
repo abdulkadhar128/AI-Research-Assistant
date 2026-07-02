@@ -1,25 +1,53 @@
+"""
+Search Agent node.
+
+Retrieves web search results using SearchProvider (LangChain Tavily backend)
+and stores them as a structured list of dicts in state.sources.
+No LLM is called here — search is a pure tool invocation step.
+Citations are NOT built here — that happens in verify_node after filtering,
+so only real, verified source URLs end up in the bibliography.
+"""
+
 from backend.graph.state import ResearchState
-from backend.llm.client import LLMClient
 from backend.search.search_client import SearchProvider
-from backend.search.citation_formatter import CitationFormatter
+
 
 def search_node(state: ResearchState) -> dict:
     """
-    Search node that retrieves web search results using the raw query,
-    enabling parallel planning and search execution.
+    Execute a web search for the research topic.
+
+    Routes to:
+      1. TavilySearchResults (langchain-community) — when TAVILY_API_KEY is set
+      2. Serper              (direct HTTP)          — when SERPER_API_KEY is set
+      3. Deterministic mock results                 — offline / mock mode
     """
-    query = state.get("query", "")
-    
-    import time
-    # Bypass query generation LLM to run in parallel and save ~2 seconds.
+    topic = state.get("topic", "")
+    print(f"\n{'='*60}")
+    print(f"[SEARCH] TOPIC: {topic!r}")
+    print(f"{'='*60}")
+
+    if not topic:
+        print("[SEARCH] WARNING: topic is empty! Search will return mock results.")
+
     provider = SearchProvider()
-    results = provider.search(query)
-    
-    search_context = CitationFormatter.format_search_results_for_context(results)
-    citations = CitationFormatter.format_citations(results)
-    
-    return {
-        "search_results": search_context,
-        "citations": citations,
-        "search_finish_time": time.time()
-    }
+    results  = provider.search(topic)
+
+    print(f"[SEARCH] Retrieved {len(results)} results for topic: {topic!r}")
+    for i, r in enumerate(results, 1):
+        print(f"  [{i}] {r.title[:60]!r} — {r.url[:70]}")
+
+    # Build structured source dicts for the Verification node.
+    # NOTE: citations field is intentionally NOT set here.
+    # verify_node will build citations from only the verified subset of these sources.
+    sources = [
+        {
+            "title":         r.title,
+            "url":           r.url,
+            "snippet":       r.snippet,
+            "source_domain": r.source_domain,
+        }
+        for r in results
+    ]
+
+    return {"sources": sources}
+
