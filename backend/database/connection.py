@@ -32,8 +32,8 @@ def init_db() -> None:
     inspector = inspect(engine)
     if "reports" in inspector.get_table_names():
         columns = [c["name"] for c in inspector.get_columns("reports")]
-        if "user_id" in columns:
-            print("Migration: reports table has user_id, dropping old tables...")
+        if "user_id" not in columns:
+            print("Migration: reports table does not have user_id, dropping old tables...")
             with engine.begin() as conn:
                 conn.execute(text("DROP TABLE IF EXISTS reports"))
                 conn.execute(text("DROP TABLE IF EXISTS users"))

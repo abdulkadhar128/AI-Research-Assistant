@@ -1,6 +1,39 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, EmailStr
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
+
+
+# =========================
+# User & Auth Schemas
+# =========================
+
+class UserBase(BaseModel):
+    email: EmailStr
+
+
+class UserCreate(UserBase):
+    password: str
+
+
+class User(UserBase):
+    id: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+
+class TokenData(BaseModel):
+    email: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
 
 
 # =========================
@@ -21,11 +54,12 @@ class ReportBase(BaseModel):
 
 
 class ReportCreate(ReportBase):
-    pass
+    user_id: Optional[int] = None
 
 
 class Report(ReportBase):
     id: int
+    user_id: int
     created_at: datetime
     generation_time: Optional[float] = None
 
